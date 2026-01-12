@@ -1,5 +1,10 @@
 name: Daily Stock Data Update
 
+# --- 新增这段 ---
+permissions:
+  contents: write
+# ----------------
+
 on:
   schedule:
     # 每天 UTC 时间 22:00 运行 (对应美股收盘后)
