@@ -1,0 +1,36 @@
+name: Daily Stock Data Update
+
+on:
+  schedule:
+    # 每天 UTC 时间 22:00 运行 (对应美股收盘后)
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 允许你在 GitHub 网页上手动点击运行测试
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas yfinance
+
+    - name: Run update script
+      run: python update_incremental_data.py  # 这里改成你那个增量更新脚本的文件名
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "li3yang3@gmail.com"
+        git add data/*.csv
+        # 如果有变动才提交，没变动不报错
+        git commit -m "Auto-update stock data" || exit 0
+        git push
