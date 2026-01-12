@@ -28,7 +28,7 @@ jobs:
 
     - name: Commit and push changes
       run: |
-        git config --global user.name "GitHub Action"
+        git config --global user.name "breadwinner"
         git config --global user.email "li3yang3@gmail.com"
         git add data/*.csv
         # 如果有变动才提交，没变动不报错
