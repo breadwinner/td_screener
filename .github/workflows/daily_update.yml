@@ -38,4 +38,8 @@ jobs:
         git add data/*.csv
         # 如果有变动才提交，没变动不报错
         git commit -m "Auto-update stock data" || exit 0
+
+        # 👇【新增】这一行是关键！先拉取最新的代码，避免冲突
+        git pull --rebase origin main
+        
         git push
