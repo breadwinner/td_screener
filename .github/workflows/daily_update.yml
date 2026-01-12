@@ -8,7 +8,7 @@ permissions:
 on:
   schedule:
     # 每天 UTC 时间 22:00 运行 (对应美股收盘后)
-    - cron: '0 23 * * *'
+    - cron: '0 23 */3 * *'
   workflow_dispatch: # 允许你在 GitHub 网页上手动点击运行测试
 
 jobs:
