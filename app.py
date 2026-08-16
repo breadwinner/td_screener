@@ -179,7 +179,7 @@ if start_btn:
             
             # 格式化显示
             st.dataframe(
-                result_df.style.applymap(
+                result_df.style.map(
                     lambda x: 'color: green' if x == 'TD 9 Sequential' else ('color: red' if x == 'TD 13 Sequential' else ''), 
                     subset=['Signal']
                 ),
