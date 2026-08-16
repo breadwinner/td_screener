@@ -114,19 +114,12 @@ def scan_stocks(target_date, data_folder="data"):
 
             # 6. 汇总判断 (根据原代码逻辑: 只要 TD>=9 或 TD>=13 就算发现)
             if (last_td_count >= 9):
-                tname = yf.Ticker(ticker)
-                stock_name = (
-                    ticker.info.get("shortName")
-                    or ticker.info.get("longName")
-                    or symbol
-                )
                 signal_type = "TD Setup"
                 if last_td_count == 9: signal_type = "TD 9 Sequential"
                 if last_td_count == 13: signal_type = "TD 13 Sequential"
                 
                 results_list.append({
                     'Ticker': ticker,
-                    'name': stock_name,
                     'Date': target_date.strftime('%Y-%m-%d'),
                     'Signal': signal_type,
                     'TD_Count': int(last_td_count),
