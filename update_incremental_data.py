@@ -149,7 +149,7 @@ my_tickers = [
     "NXPI","PCAR","MNST","ADSK","CPRT","FTNT","PAYX","MCHP","KDP","KHC","AEP","GEHC","IDXX","EXC","ODFL",
     "BKR","LULU","MRVL","CTSH","EA","DASH","FAST","AZN","TTD","CDW","ROST","ON","CSCO","ABNB","TEAM",
     "PDD","BIIB","DXCM","ZS","ILMN","MRNA","ALNY","FER","INSM","MPWR","STX","WDC","AXON","MDB",
-    "ARM","PLTR","APP","SNOW","DDOG","MSTR","VRT","FSLR","CRWD",
+    "ARM","PLTR","APP","SNOW","DDOG","MSTR","VRT","FSLR","CRWD","BRK.B","WDAY","DELL","CEG","VST","ANSS","KKR","COR","LNI",
     "ARM",   # Arm Holdings (英国芯片巨头)
     "MELI",  # MercadoLibre (拉美电商巨头)
     "SHOP",  # Shopify (加拿大电商SaaS)
