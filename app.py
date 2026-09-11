@@ -505,18 +505,6 @@ TICKER_NAME_MAP = {
     "WDAY": "Workday"
 }
 
-import os
-import json
-import datetime
-import pandas as pd
-import streamlit as st
-
-# 如果之前定义了 TICKER_NAME_MAP，请保留你的映射字典
-TICKER_NAME_MAP = {
-    # 'AAPL': 'Apple Inc.',
-    # 'NVDA': 'NVIDIA Corp',
-}
-
 WATCHLIST_FILE = "watchlist.json"
 
 # --- Watchlist 辅助函数 ---
