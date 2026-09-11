@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import datetime
+import json
 import yfinance as yf
 
 # 设置页面配置
@@ -504,6 +505,66 @@ TICKER_NAME_MAP = {
     "WDAY": "Workday"
 }
 
+import os
+import json
+import datetime
+import pandas as pd
+import streamlit as st
+
+# 如果之前定义了 TICKER_NAME_MAP，请保留你的映射字典
+TICKER_NAME_MAP = {
+    # 'AAPL': 'Apple Inc.',
+    # 'NVDA': 'NVIDIA Corp',
+}
+
+WATCHLIST_FILE = "watchlist.json"
+
+# --- Watchlist 辅助函数 ---
+
+def load_watchlist():
+    """从本地 JSON 文件读取自选股列表"""
+    if os.path.exists(WATCHLIST_FILE):
+        try:
+            with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_watchlist(data):
+    """保存自选股列表到本地 JSON 文件"""
+    with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def add_to_watchlist(ticker, name, price, signal="", notes=""):
+    """添加股票到自选股"""
+    items = load_watchlist()
+    ticker = ticker.strip().upper()
+    
+    if any(item["ticker"] == ticker for item in items):
+        return False, f"⚠️ {ticker} 已经在自选列表中，无需重复添加！"
+    
+    entry = {
+        "ticker": ticker,
+        "name": name if name else TICKER_NAME_MAP.get(ticker, ticker),
+        "added_price": round(float(price), 2) if price is not None else None,
+        "added_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "signal": signal,
+        "notes": notes
+    }
+    items.append(entry)
+    save_watchlist(items)
+    return True, f"✅ 成功将 {ticker} 添加至自选股（记录价格: ${entry['added_price']}）！"
+
+def remove_from_watchlist(ticker):
+    """从自选股移除指定代码"""
+    items = load_watchlist()
+    items = [x for x in items if x["ticker"] != ticker]
+    save_watchlist(items)
+
+
+# --- TD Sequential 策略计算逻辑 ---
+
 def calculate_td_structure(df):
     """
     计算整个DataFrame的TD结构计数
@@ -511,35 +572,27 @@ def calculate_td_structure(df):
     close = df['Close']
     # 模拟通达信 BARSLASTCOUNT(CLOSE < REF(CLOSE, 4))
     condition = close < close.shift(4)
-    # 这里的逻辑是：如果条件满足，累加计数；如果不满足，重置为0
-    # Pandas vectorization trick:
-    # 1. (condition != condition.shift()) 找出状态变化点
-    # 2. cumsum() 给每一段连续的状态分配一个ID
-    # 3. groupby().cumsum() 在每一段内累加
     td_count = condition.groupby((condition != condition.shift()).cumsum()).cumsum()
     return td_count
 
 def scan_stocks(target_date, data_folder="data"):
     results_list = []
     
-    # 检查文件夹是否存在
     if not os.path.exists(data_folder):
         st.error(f"找不到文件夹: {data_folder}，请确保在当前目录下创建该文件夹并放入CSV数据。")
-        return []
+        return pd.DataFrame()
 
     files = [f for f in os.listdir(data_folder) if f.endswith('.csv')]
+    if not files:
+        st.warning(f"文件夹 '{data_folder}' 下没有找到任何 CSV 文件。")
+        return pd.DataFrame()
     
-    # 创建进度条
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     total_files = len(files)
-    
-    # 转换 target_date 为 datetime64[ns] 以便与 pandas 索引匹配
     target_ts = pd.Timestamp(target_date)
 
     for i, file in enumerate(files):
-        # 更新进度条
         progress_bar.progress((i + 1) / total_files)
         status_text.text(f"正在扫描: {file} ({i+1}/{total_files})")
         
@@ -547,74 +600,38 @@ def scan_stocks(target_date, data_folder="data"):
         file_path = os.path.join(data_folder, file)
         
         try:
-            # 1. 读取数据
             df = pd.read_csv(file_path, index_col=0, parse_dates=True)
-            
-            # 统一列名
             df.columns = [c.capitalize() for c in df.columns]
-            
-            # 确保按日期升序排列
             df = df.sort_index()
 
-            # 2. 检查选定日期是否存在于数据中
-            # 如果这一天是周末、假期或者停牌，数据中可能没有这一行
             if target_ts not in df.index:
-                # 尝试找这一天之前最近的一个交易日? 
-                # 这里为了严谨，如果指定日期没数据，则跳过
                 continue
             
-            # 获取目标日期在DataFrame中的整数位置
             loc_idx = df.index.get_loc(target_ts)
-            
-            # 如果数据历史太短，无法计算前置指标（至少需要前面4天+额外缓冲）
             if loc_idx < 5: 
                 continue
 
-            # 3. 截取需要的数据片段进行计算
-            # 为了提高效率，我们不需要计算整个历史的TD，只需要计算目标日期附近的
-            # 但是为了准确计算连续性，最好多取一些前置数据，比如前50天
             start_idx = max(0, loc_idx - 60)
             subset_df = df.iloc[start_idx : loc_idx + 1].copy()
             
-            # 4. 计算指标
             close = subset_df['Close']
             high = subset_df['High']
             
-            # 计算 TD 计数
             td_counts = calculate_td_structure(subset_df)
-            
-            # 获取目标日期的具体数值 (iloc[-1] 即为 target_date)
             last_td_count = td_counts.iloc[-1]
             curr_close = close.iloc[-1]
-            prev_close = close.iloc[-2]  # REF(CLOSE, 1)
+            prev_close = close.iloc[-2]
             
-            # 获取 High 的引用
-            # 注意：python list/iloc 切片逻辑
-            # -1 是当前(target_date), -2 是昨天, -3 是前天(REF(High, 2)), -4 是大前天(REF(High, 3))
-            high_ref_1 = high.iloc[-2] # REF(HIGH, 1)
-            high_ref_2 = high.iloc[-3] # REF(HIGH, 2)
-            high_ref_3 = high.iloc[-4] # REF(HIGH, 3)
-            
-            # 5. 买入条件判定 (逻辑与原代码保持一致)
-            
-            # HJ_31: 突破确认 
-            # (注意：原逻辑好像没有直接用hj31做最终输出判定，这里保留计算逻辑)
-            # hj31_signal = (curr_close > high_ref_2) and (prev_close <= high_ref_3)
-            
-            # TD 结构计数
-            td_setup_9 = last_td_count >= 9 # 通常是等于9或者13时提示
-            td_setup_13 = last_td_count >= 13
-            # 如果你想要 >= 9，可以改回 >=
-            
-            # HJ_51 & HJ_54 信号 (13计数且突破昨天高点)
-            hj51_54_signal = (last_td_count >= 13) and (curr_close > high_ref_1)
+            high_ref_1 = high.iloc[-2]
 
-            # 6. 汇总判断 (根据原代码逻辑: 只要 TD>=9 或 TD>=13 就算发现)
-            if (last_td_count >= 9):
+            if last_td_count >= 9:
                 signal_type = "TD Setup"
-                if last_td_count == 9: signal_type = "TD 9 Sequential"
-                if last_td_count == 13: signal_type = "TD 13 Sequential"
-                stock_name = TICKER_NAME_MAP.get(ticker, ticker)  # 查不到就默认显示 ticker 本身
+                if last_td_count == 9: 
+                    signal_type = "TD 9 Sequential"
+                elif last_td_count == 13: 
+                    signal_type = "TD 13 Sequential"
+                
+                stock_name = TICKER_NAME_MAP.get(ticker, ticker)
                 results_list.append({
                     'Ticker': ticker,
                     'Name': stock_name,
@@ -625,9 +642,7 @@ def scan_stocks(target_date, data_folder="data"):
                     'Pct_Change': round((curr_close - prev_close)/prev_close * 100, 2)
                 })
 
-        except Exception as e:
-            # 调试用，实际运行可以注释掉
-            # print(f"Error processing {ticker}: {e}")
+        except Exception:
             continue
             
     status_text.text("扫描完成！")
@@ -635,24 +650,18 @@ def scan_stocks(target_date, data_folder="data"):
     
     return pd.DataFrame(results_list)
 
-# --- Streamlit UI 部分 ---
 
+# --- Streamlit UI 布局 ---
+
+st.set_page_config(page_title="TD结构量化选股助手", layout="wide", page_icon="📈")
 st.title("📈 TD结构量化选股助手")
-st.markdown("该工具基于 **TD Sequential** 策略扫描本地 CSV 数据。")
 
 # 侧边栏配置
 with st.sidebar:
     st.header("配置参数")
-    
-    # 1. 选择日期
-    # 默认为今天
     default_date = datetime.date.today()
     selected_date = st.date_input("选择回测/选股日期", default_date)
-    
-    # 2. 数据文件夹
     data_folder = st.text_input("数据文件夹路径", value="data")
-    
-    # 3. 触发按钮
     start_btn = st.button("开始扫描", type="primary")
 
     st.info("""
@@ -662,39 +671,143 @@ with st.sidebar:
     3. 比较逻辑：Close < Ref(Close, 4)
     """)
 
-# 主界面逻辑
+# 初始化 Session State，避免加入自选时丢失扫描结果
+if "scan_results" not in st.session_state:
+    st.session_state["scan_results"] = None
+if "last_scanned_date" not in st.session_state:
+    st.session_state["last_scanned_date"] = None
+
 if start_btn:
     if not os.path.exists(data_folder):
         st.error(f"❌ 错误：找不到文件夹 '{data_folder}'。请确认路径正确。")
     else:
         st.write(f"正在扫描 **{selected_date}** 的数据...")
-        
-        # 执行耗时操作
-        result_df = scan_stocks(selected_date, data_folder)
-        
-        if not result_df.empty:
-            st.success(f"扫描完成！共发现 {len(result_df)} 只符合条件的股票。")
+        res_df = scan_stocks(selected_date, data_folder)
+        st.session_state["scan_results"] = res_df
+        st.session_state["last_scanned_date"] = selected_date
+
+# 切换 Tabs 页面
+tab_scan, tab_watch = st.tabs(["🔍 TD 选股扫描", "⭐ 自选股监控 (Watchlist)"])
+
+# --- Tab 1: 扫描与加入自选 ---
+with tab_scan:
+    scan_df = st.session_state["scan_results"]
+    scan_dt = st.session_state["last_scanned_date"]
+    
+    if scan_df is not None:
+        if not scan_df.empty:
+            st.success(f"扫描完成！在 {scan_dt} 共发现 {len(scan_df)} 只符合条件的股票。")
             
-            # 格式化显示
+            # 1. 结果表格展示
             st.dataframe(
-                result_df.style.map(
+                scan_df.style.map(
                     lambda x: 'color: green' if x == 'TD 9 Sequential' else ('color: red' if x == 'TD 13 Sequential' else ''), 
                     subset=['Signal']
                 ),
                 use_container_width=True
             )
             
-            # CSV 下载按钮
-            csv = result_df.to_csv(index=False).encode('utf-8')
+            # 2. 一键加入 Watchlist 区块
+            st.markdown("#### 📌 将扫描结果加入自选")
+            col_sel, col_btn = st.columns([3, 1])
+            
+            with col_sel:
+                # 构造下拉选项 "NVDA - NVIDIA Corp (Close: $120.50)"
+                ticker_options = [
+                    f"{row['Ticker']} | {row['Name']} | ${row['Close']}" 
+                    for _, row in scan_df.iterrows()
+                ]
+                selected_option = st.selectbox("选择要关注的股票:", ticker_options, key="select_ticker_from_scan")
+            
+            with col_btn:
+                st.write("")  # 垂直对齐
+                st.write("")
+                if st.button("➕ 加入自选股", key="btn_add_from_scan"):
+                    chosen_ticker = selected_option.split(" | ")[0]
+                    chosen_row = scan_df[scan_df['Ticker'] == chosen_ticker].iloc[0]
+                    
+                    ok, msg = add_to_watchlist(
+                        ticker=chosen_row['Ticker'],
+                        name=chosen_row['Name'],
+                        price=chosen_row['Close'],
+                        signal=chosen_row['Signal']
+                    )
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.warning(msg)
+
+            st.write("---")
+            # 3. CSV 下载
+            csv = scan_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 下载结果 (CSV)",
                 data=csv,
-                file_name=f"td_scan_results_{selected_date}.csv",
+                file_name=f"td_scan_results_{scan_dt}.csv",
                 mime="text/csv",
             )
         else:
-            st.warning(f"扫描完成，在 {selected_date} 没有发现符合买入条件的股票。")
+            st.warning(f"扫描完成，在 {scan_dt} 没有发现符合买入条件的股票。")
             st.caption("可能原因：1. 当天无交易(周末/假期) 2. 数据未更新 3. 确实无信号")
+    else:
+        st.write("👈 请在左侧侧边栏选择日期并点击“开始扫描”。")
 
-else:
-    st.write("👈 请在左侧选择日期并点击“开始扫描”。")
+
+# --- Tab 2: 自选股列表与管理 ---
+with tab_watch:
+    st.markdown("### 我的自选监控列表")
+    watchlist = load_watchlist()
+
+    # 支持手动输入代码加入自选
+    with st.expander("➕ 手动添加任意代码到自选"):
+        m_col1, m_col2, m_col3, m_col4 = st.columns([2, 2, 2, 1])
+        with m_col1:
+            manual_ticker = st.text_input("股票代码 (Ticker)", placeholder="如 NVDA").strip().upper()
+        with m_col2:
+            manual_name = st.text_input("股票名称 (可选)", placeholder="如 英伟达")
+        with m_col3:
+            manual_price = st.number_input("记录价格 (可选)", min_value=0.0, value=0.0, step=0.01)
+        with m_col4:
+            st.write("")
+            st.write("")
+            if st.button("添加", key="btn_manual_add"):
+                if manual_ticker:
+                    price_val = manual_price if manual_price > 0 else None
+                    ok, msg = add_to_watchlist(manual_ticker, manual_name, price_val, signal="手动添加")
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+                else:
+                    st.error("请输入代码")
+
+    if not watchlist:
+        st.info("💡 当前自选列表为空。你可以从左侧标签页扫描后点击添加，或在上方手动输入添加。")
+    else:
+        # 整理自选股表格
+        watch_rows = []
+        for item in watchlist:
+            watch_rows.append({
+                "代码": item.get("ticker"),
+                "名称": item.get("name", "-"),
+                "加入时价格": f"${item['added_price']:.2f}" if item.get("added_price") is not None else "未记录",
+                "触发信号": item.get("signal", "-"),
+                "加入时间": item.get("added_time", "-")
+            })
+
+        st.dataframe(pd.DataFrame(watch_rows), use_container_width=True)
+
+        # 移除股票操作
+        st.write("---")
+        del_col1, del_col2 = st.columns([3, 1])
+        with del_col1:
+            tickers_list = [item["ticker"] for item in watchlist]
+            ticker_to_delete = st.selectbox("选择要移除的股票:", tickers_list, key="del_select")
+        with del_col2:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ 移出自选", key="btn_del_watch"):
+                remove_from_watchlist(ticker_to_delete)
+                st.success(f"已移除 {ticker_to_delete}")
+                st.rerun()
